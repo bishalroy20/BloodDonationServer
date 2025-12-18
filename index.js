@@ -15,8 +15,8 @@ const client = new MongoClient(uri, {
   serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
 });
 
-let db;
-let userCollection;
+let db, userCollection, requestCollection;
+
 
 // Registration route
 app.post("/api/auth/register", async (req, res) => {
@@ -66,12 +66,243 @@ app.patch("/api/users/:id/status", async (req, res) => {
   res.json({ success: true });
 });
 
+
+
+
+// Get user by uid
+app.get("/api/users/:uid", async (req, res) => {
+  const user = await userCollection.findOne({ uid: req.params.uid });
+  res.json(user);
+});
+
+// Update user by uid
+app.patch("/api/users/:uid", async (req, res) => {
+  const { name, avatarUrl, bloodGroup, district, upazila } = req.body;
+  await userCollection.updateOne(
+    { uid: req.params.uid },
+    { $set: { name, avatarUrl, bloodGroup, district, upazila } }
+  );
+  res.json({ success: true });
+});
+
+
+
+
+// Create donation request
+app.post("/api/requests", async (req, res) => {
+  try {
+    const { requesterUid } = req.body;
+
+    if (!requesterUid) {
+      return res.status(400).json({ message: "Requester UID required" });
+    }
+
+    const user = await userCollection.findOne({ uid: requesterUid });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const status = String(user.status || "").trim().toLowerCase();
+    if (status !== "active") {
+      return res
+        .status(403)
+        .json({ message: "Blocked users cannot create a donation request" });
+    }
+
+    const newRequest = {
+      ...req.body,
+      status: "pending",
+      createdAt: new Date(),
+    };
+
+    const result = await requestCollection.insertOne(newRequest);
+
+    res.json({
+      success: true,
+      request: { ...newRequest, _id: result.insertedId },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+// Get requests by user (with optional status, pagination)
+app.get("/api/requests", async (req, res) => {
+  const { uid, status, page = 1, limit = 10 } = req.query;
+  const query = { requesterUid: uid };
+  if (status) query.status = status;
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const cursor = requestCollection.find(query).skip(skip).limit(parseInt(limit));
+  const items = await cursor.toArray();
+  const total = await requestCollection.countDocuments(query);
+
+  res.json({ items, total });
+});
+
+// Get single request details
+app.get("/api/requests/:id", async (req, res) => {
+  const request = await requestCollection.findOne({ _id: new ObjectId(req.params.id) });
+  res.json(request);
+});
+
+// Update donation request (edit form)
+app.patch("/api/requests/:id", async (req, res) => {
+  await requestCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: req.body }
+  );
+  res.json({ success: true });
+});
+
+// Volunteers and Admins can view all requests
+app.get("/api/admin/requests", requireRole(["admin", "volunteer"]), async (req, res) => {
+  const { status, page = 1, limit = 10 } = req.query;
+  const query = {};
+  if (status) query.status = status;
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const items = await requestCollection.find(query).skip(skip).limit(parseInt(limit)).toArray();
+  const total = await requestCollection.countDocuments(query);
+
+  res.json({ items, total });
+});
+
+// Volunteers and Admins can update status
+app.patch("/api/admin/requests/:id/status", requireRole(["admin", "volunteer"]), async (req, res) => {
+  const { status } = req.body;
+  await requestCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+  res.json({ success: true });
+});
+
+// Delete donation request
+app.delete("/api/requests/:id", async (req, res) => {
+  await requestCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+  res.json({ success: true });
+});
+
+
+// for admin dashboard
+// GET total donors
+app.get("/api/stats/total-donors", async (req, res) => {
+  const total = await userCollection.countDocuments({ role: "donor" });
+  res.json({ total });
+});
+
+// GET total funding (sum amount from funding collection)
+app.get("/api/stats/total-funding", async (req, res) => {
+  const fundingCollection = db.collection("funding");
+  const agg = await fundingCollection.aggregate([
+    { $group: { _id: null, total: { $sum: "$amount" } } }
+  ]).toArray();
+  res.json({ total: agg[0]?.total || 0 });
+});
+
+// GET total blood donation requests
+app.get("/api/stats/total-requests", async (req, res) => {
+  const total = await requestCollection.countDocuments({});
+  res.json({ total });
+});
+
+//all user mgt
+
+// GET all users with optional status filter and pagination
+app.get("/api/admin/users", async (req, res) => {
+  const { status, page = 1, limit = 10 } = req.query;
+  const query = {};
+  if (status) query.status = status;
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const items = await userCollection.find(query).skip(skip).limit(parseInt(limit)).toArray();
+  const total = await userCollection.countDocuments(query);
+  res.json({ items, total });
+});
+
+
+
+// PATCH user status (active / blocked)
+app.patch("/api/admin/users/:uid/status", async (req, res) => {
+  const { status } = req.body;
+  await userCollection.updateOne({ uid: req.params.uid }, { $set: { status } });
+  res.json({ success: true });
+});
+
+// PATCH user role (donor / volunteer / admin)
+app.patch("/api/admin/users/:uid/role", async (req, res) => {
+  const { role } = req.body;
+  await userCollection.updateOne({ uid: req.params.uid }, { $set: { role } });
+  res.json({ success: true });
+});
+
+
+//all donation req
+
+// GET all requests with optional status, pagination
+app.get("/api/admin/requests", async (req, res) => {
+  const { status, page = 1, limit = 10 } = req.query;
+  const query = {};
+  if (status) query.status = status;
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const items = await requestCollection.find(query).skip(skip).limit(parseInt(limit)).toArray();
+  const total = await requestCollection.countDocuments(query);
+  res.json({ items, total });
+});
+
+// PATCH a request's status
+app.patch("/api/admin/requests/:id/status", async (req, res) => {
+  const { status } = req.body;
+  await requestCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+  res.json({ success: true });
+});
+
+// PATCH a request (edit)
+app.patch("/api/admin/requests/:id", async (req, res) => {
+  await requestCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: req.body }
+  );
+  res.json({ success: true });
+});
+
+// DELETE a request
+app.delete("/api/admin/requests/:id", async (req, res) => {
+  await requestCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+  res.json({ success: true });
+});
+
+
+
+function requireRole(roles) {
+  return async (req, res, next) => {
+    const { uid } = req.body; // or from JWT/session
+    const user = await userCollection.findOne({ uid });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (!roles.includes(user.role)) {
+      return res.status(403).json({ message: "Forbidden: insufficient privileges" });
+    }
+    next();
+  };
+}
+
+
 // Connect DB and start server
 async function run() {
   try {
     await client.connect();
     db = client.db("BloodDonation");
     userCollection = db.collection("user");
+    requestCollection = db.collection("requests");
+
     console.log("✅ Connected to MongoDB");
 
     app.listen(port, () => {
