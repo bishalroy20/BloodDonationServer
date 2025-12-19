@@ -27,8 +27,9 @@ let db, userCollection, requestCollection , fundingCollection;
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-
+  // const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  const token = req.headers.authorization?.split(" ")[1];
+  // jwt.verify(token, process.env.JWT_SECRET);
   if (!token) {
     return res.status(401).json({ message: "Unauthorized: No token provided" });
   }
@@ -154,6 +155,7 @@ app.post("/api/requests", async (req, res) => {
 });
 
 
+
 // Get requests by user (with optional status, pagination)
 app.get("/api/requests", async (req, res) => {
   const { uid, status, page = 1, limit = 10 } = req.query;
@@ -167,6 +169,8 @@ app.get("/api/requests", async (req, res) => {
 
   res.json({ items, total });
 });
+
+
 
 // Get single request details
 app.get("/api/requests/:id", async (req, res) => {
@@ -182,6 +186,17 @@ app.patch("/api/requests/:id", async (req, res) => {
   );
   res.json({ success: true });
 });
+
+
+
+// Delete request
+app.delete("/api/requests/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  await requestCollection.deleteOne({ _id: new ObjectId(id), donorUid: req.user.uid });
+  res.json({ success: true });
+});
+
+
 
 // Volunteers and Admins can view all requests
 app.get("/api/admin/requests", requireRole(["admin", "volunteer"]), async (req, res) => {
@@ -205,6 +220,26 @@ app.patch("/api/admin/requests/:id/status", requireRole(["admin", "volunteer"]),
   );
   res.json({ success: true });
 });
+
+
+
+
+
+
+// Update request status
+app.patch("/api/requests/:id/status", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  await requestCollection.updateOne(
+    { _id: new ObjectId(id), donorUid: req.user.uid },
+    { $set: { status } }
+  );
+  res.json({ success: true });
+});
+
+
+
+
 
 // Delete donation request
 app.delete("/api/requests/:id", async (req, res) => {
@@ -375,18 +410,7 @@ app.patch("/api/requests/:id/confirm", async (req, res) => {
 
 
 
-function requireRole(roles) {
-  return async (req, res, next) => {
-    const { uid } = req.body; // or from JWT/session
-    const user = await userCollection.findOne({ uid });
-    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (!roles.includes(user.role)) {
-      return res.status(403).json({ message: "Forbidden: insufficient privileges" });
-    }
-    next();
-  };
-}
 
 // Issue JWT (example login/upsert endpoint)
 app.post("/api/auth/issue-token", async (req, res) => {
@@ -477,7 +501,18 @@ app.get("/api/stats/total-funding", requireAuth, requireRole(["admin", "voluntee
 });
 
 
+function requireRole(roles) {
+  return async (req, res, next) => {
+    const { uid } = req.body; // or from JWT/session
+    const user = await userCollection.findOne({ uid });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
+    if (!roles.includes(user.role)) {
+      return res.status(403).json({ message: "Forbidden: insufficient privileges" });
+    }
+    next();
+  };
+}
 
 
 // Connect DB and start server
