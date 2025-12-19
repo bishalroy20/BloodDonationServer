@@ -2,6 +2,8 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const Stripe = require("stripe");
 const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
 
 const app = express();
@@ -14,8 +16,32 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 const client = new MongoClient(uri, {
   serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
 });
+const DB_NAME = process.env.DB_NAME || "BloodDonation";
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-let db, userCollection, requestCollection;
+
+let db, userCollection, requestCollection , fundingCollection;
+
+
+
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized: No token provided" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // attach decoded payload { uid, email, role }
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Unauthorized: Invalid token" });
+  }
+}
+
 
 
 // Registration route
@@ -281,6 +307,74 @@ app.delete("/api/admin/requests/:id", async (req, res) => {
 
 
 
+// search page
+// Search donors by blood group, district, upazila
+app.get("/api/search-donors", async (req, res) => {
+  const { bloodGroup, district, upazila } = req.query;
+  const query = {};
+
+  if (bloodGroup) query.bloodGroup = bloodGroup;
+  if (district) query.district = district;
+  if (upazila) query.upazila = upazila;
+
+  try {
+    const donors = await userCollection.find(query).toArray();
+    res.json(donors);
+  } catch (err) {
+    console.error("Error searching donors:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
+// Get all pending donation requests (public)
+app.get("/api/public/requests", async (req, res) => {
+  try {
+    const requests = await requestCollection.find({ status: "pending" }).toArray();
+    res.json(requests);
+  } catch (err) {
+    console.error("Error fetching pending requests:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
+// Confirm donation: change status from pending to inprogress
+app.patch("/api/requests/:id/confirm", async (req, res) => {
+  try {
+    const { donorName, donorEmail } = req.body;
+    const _id = new ObjectId(req.params.id);
+
+    const request = await requestCollection.findOne({ _id });
+    if (!request) return res.status(404).json({ message: "Request not found" });
+
+    if (request.status !== "pending") {
+      return res.status(400).json({ message: "Request is not pending" });
+    }
+
+    await requestCollection.updateOne(
+      { _id },
+      {
+        $set: {
+          status: "inprogress",
+          donorName,
+          donorEmail,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error confirming donation:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
 function requireRole(roles) {
   return async (req, res, next) => {
     const { uid } = req.body; // or from JWT/session
@@ -294,6 +388,97 @@ function requireRole(roles) {
   };
 }
 
+// Issue JWT (example login/upsert endpoint)
+app.post("/api/auth/issue-token", async (req, res) => {
+  try {
+    const { uid, email } = req.body;
+    if (!uid || !email) return res.status(400).json({ message: "uid and email required" });
+
+    const user = await userCollection.findOne({ uid });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const token = jwt.sign({ uid, email, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token });
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Create payment intent (private)
+app.post("/api/funding/create-intent", requireAuth, async (req, res) => {
+  try {
+    const { amount } = req.body; // in smallest unit: cents (USD) or paisa (BDT)
+    if (!amount || amount <= 0) return res.status(400).json({ message: "Invalid amount" });
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount, // e.g., 500 = $5.00
+      currency: process.env.STRIPE_CURRENCY || "usd",
+      metadata: { uid: req.user.uid, email: req.user.email },
+    });
+
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    console.error("Stripe error:", err);
+    res.status(500).json({ message: "Payment error" });
+  }
+});
+
+
+// Record funding after successful payment (webhook or client confirm)
+app.post("/api/funding/record", requireAuth, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    if (!amount || amount <= 0) return res.status(400).json({ message: "Invalid amount" });
+
+    const donor = await userCollection.findOne({ uid: req.user.uid });
+    if (!donor) return res.status(404).json({ message: "User not found" });
+
+    const doc = {
+      uid: req.user.uid,
+      name: donor.name || "",
+      email: donor.email,
+      amount, // store smallest unit or normalized currency value consistently
+      currency: process.env.STRIPE_CURRENCY || "usd",
+      createdAt: new Date(),
+    };
+
+    const result = await fundingCollection.insertOne(doc);
+    res.json({ success: true, funding: { ...doc, _id: result.insertedId } });
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
+
+
+
+// List all funds (private)
+app.get("/api/funding", requireAuth, async (req, res) => {
+  try {
+    const items = await fundingCollection.find().sort({ createdAt: -1 }).toArray();
+    res.json(items);
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Admin/Volunteer: total funding (for dashboards)
+app.get("/api/stats/total-funding", requireAuth, requireRole(["admin", "volunteer"]), async (req, res) => {
+  try {
+    const agg = await fundingCollection.aggregate([
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]).toArray();
+    res.json({ total: agg[0]?.total || 0, currency: process.env.STRIPE_CURRENCY || "usd" });
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
+
 
 // Connect DB and start server
 async function run() {
@@ -302,6 +487,13 @@ async function run() {
     db = client.db("BloodDonation");
     userCollection = db.collection("user");
     requestCollection = db.collection("requests");
+    fundingCollection = db.collection("funding");
+
+
+    await userCollection.createIndex({ uid: 1 }, { unique: true });
+    await fundingCollection.createIndex({ uid: 1 });
+    await fundingCollection.createIndex({ createdAt: -1 });
+
 
     console.log("✅ Connected to MongoDB");
 
