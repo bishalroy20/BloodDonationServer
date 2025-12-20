@@ -45,6 +45,22 @@ function requireAuth(req, res, next) {
 
 
 
+function requireRole(roles) {
+  return async (req, res, next) => {
+    const { uid } = req.body; // or from JWT/session
+    const user = await userCollection.findOne({ uid });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (!roles.includes(user.role)) {
+      return res.status(403).json({ message: "Forbidden: insufficient privileges" });
+    }
+    next();
+  };
+}
+
+
+
+
 // Registration route
 app.post("/api/auth/register", async (req, res) => {
   try {
@@ -199,27 +215,8 @@ app.patch("/api/requests/:id", async (req, res) => {
 
 
 
-app.get("/api/admin/requests", requireRole(["admin", "volunteer"]), async (req, res) => {
-  const { status, page = 1, limit = 10 } = req.query;
-  const query = {};
-  if (status) query.status = status;
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const items = await requestCollection.find(query).skip(skip).limit(parseInt(limit)).toArray();
-  const total = await requestCollection.countDocuments(query);
 
-  res.json({ items, total });
-});
-
-// Volunteers and Admins can update status
-app.patch("/api/admin/requests/:id/status", requireRole(["admin", "volunteer"]), async (req, res) => {
-  const { status } = req.body;
-  await requestCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: { status } }
-  );
-  res.json({ success: true });
-});
 
 
 
@@ -501,18 +498,6 @@ app.get("/api/stats/total-funding", requireAuth, requireRole(["admin", "voluntee
 });
 
 
-function requireRole(roles) {
-  return async (req, res, next) => {
-    const { uid } = req.body; // or from JWT/session
-    const user = await userCollection.findOne({ uid });
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    if (!roles.includes(user.role)) {
-      return res.status(403).json({ message: "Forbidden: insufficient privileges" });
-    }
-    next();
-  };
-}
 
 
 // Connect DB and start server
