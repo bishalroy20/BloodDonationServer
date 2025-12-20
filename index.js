@@ -490,16 +490,16 @@ app.get("/api/stats/total-funding", requireAuth, requireRole(["admin", "voluntee
 // Connect DB and start server
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     db = client.db("BloodDonation");
     userCollection = db.collection("user");
     requestCollection = db.collection("requests");
     fundingCollection = db.collection("funding");
 
 
-    await userCollection.createIndex({ uid: 1 }, { unique: true });
-    await fundingCollection.createIndex({ uid: 1 });
-    await fundingCollection.createIndex({ createdAt: -1 });
+    // await userCollection.createIndex({ uid: 1 }, { unique: true });
+    // await fundingCollection.createIndex({ uid: 1 });
+    // await fundingCollection.createIndex({ createdAt: -1 });
 
 
     console.log("✅ Connected to MongoDB");
