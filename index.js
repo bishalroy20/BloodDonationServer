@@ -43,8 +43,6 @@ function requireAuth(req, res, next) {
   }
 }
 
-
-
 function requireRole(roles) {
   return async (req, res, next) => {
     const { uid } = req.body; // or from JWT/session
@@ -57,7 +55,6 @@ function requireRole(roles) {
     next();
   };
 }
-
 
 
 

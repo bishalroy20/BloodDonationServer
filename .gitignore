@@ -3,5 +3,7 @@ mongodb
 username : BloodDonation
 pass : 68KO66LSp87tFmWI
 
+
+.vercel
 .env
 node_modules
