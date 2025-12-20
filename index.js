@@ -501,7 +501,6 @@ async function run() {
     // await fundingCollection.createIndex({ uid: 1 });
     // await fundingCollection.createIndex({ createdAt: -1 });
 
-
     console.log("✅ Connected to MongoDB");
 
     app.listen(port, () => {
@@ -510,6 +509,8 @@ async function run() {
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err);
     process.exit(1);
+
+
   }
 }
 run().catch(console.dir);
