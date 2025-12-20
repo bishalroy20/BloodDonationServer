@@ -180,25 +180,25 @@ app.get("/api/requests/:id", async (req, res) => {
 
 // Update donation request (edit form)
 app.patch("/api/requests/:id", async (req, res) => {
-  await requestCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: req.body }
-  );
-  res.json({ success: true });
+  try {
+    // Strip immutable fields so MongoDB doesn't throw errors
+    const { _id, donorUid, requesterUid, ...update } = req.body;
+
+    await requestCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: update }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Failed to update request:", err);
+    res.status(500).json({ message: "Failed to update request" });
+  }
 });
 
 
 
-// Delete request
-app.delete("/api/requests/:id", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  await requestCollection.deleteOne({ _id: new ObjectId(id), donorUid: req.user.uid });
-  res.json({ success: true });
-});
 
-
-
-// Volunteers and Admins can view all requests
 app.get("/api/admin/requests", requireRole(["admin", "volunteer"]), async (req, res) => {
   const { status, page = 1, limit = 10 } = req.query;
   const query = {};
