@@ -129,8 +129,6 @@ app.patch("/api/users/:uid", async (req, res) => {
 });
 
 
-
-
 // Create donation request
 app.post("/api/requests", async (req, res) => {
   try {
@@ -169,7 +167,6 @@ app.post("/api/requests", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
 
 
 // Get requests by user (with optional status, pagination)
@@ -211,13 +208,6 @@ app.patch("/api/requests/:id", async (req, res) => {
     res.status(500).json({ message: "Failed to update request" });
   }
 });
-
-
-
-
-
-
-
 
 
 
