@@ -21,7 +21,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 
-let db, userCollection, requestCollection , fundingCollection;
+let db, userCollection, requestCollection , fundingCollection , blogCollection;
 
 
 
@@ -487,14 +487,41 @@ app.get("/api/stats/total-funding", requireAuth, requireRole(["admin", "voluntee
 
 
 
+//Blogs ====================================
+app.post("/api/blogs", async (req, res) => {
+  const { title, content, image } = req.body;
+  if (!title || !content || !image) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  const result = await blogCollection.insertOne({ title, content, image, createdAt: new Date() });
+  res.json(result);
+});
+
+
+
+
+app.get("/api/blogs", async (req, res) => {
+  const blogs = await blogCollection.find().sort({ createdAt: -1 }).toArray();
+  res.json(blogs);
+});
+
+
+app.get("/api/blogs/:id", async (req, res) => {
+  const blog = await blogCollection.findOne({ _id: new ObjectId(req.params.id) });
+  res.json(blog);
+});
+
+
+
 // Connect DB and start server
 async function run() {
   try {
-    // await client.connect();
+    await client.connect();
     db = client.db("BloodDonation");
     userCollection = db.collection("user");
     requestCollection = db.collection("requests");
     fundingCollection = db.collection("funding");
+    blogCollection = db.collection("blogs");
 
 
     // await userCollection.createIndex({ uid: 1 }, { unique: true });
@@ -503,6 +530,11 @@ async function run() {
 
     console.log("✅ Connected to MongoDB");
 
+    app.get("/" , (req , res)=>{
+      res.send('Hello world');
+    })
+
+    
     app.listen(port, () => {
       console.log(`🚀 Server running on port ${port}`);
     });
@@ -512,5 +544,6 @@ async function run() {
 
 
   }
+
 }
 run().catch(console.dir);
