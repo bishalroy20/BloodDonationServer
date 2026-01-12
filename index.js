@@ -61,7 +61,7 @@ function requireRole(roles) {
 
 // POST /api/auth/register
 app.post("/api/auth/register", async (req, res) => {
-  console.log("REGISTER BODY 👉", req.body);
+  // console.log("REGISTER BODY 👉", req.body);
 
   try {
     const {
@@ -409,36 +409,100 @@ app.get("/api/public/requests", async (req, res) => {
 });
 
 // Confirm donation: change status from pending to inprogress
+// app.patch("/api/requests/:id/confirm", async (req, res) => {
+//   try {
+//     const { donorName, donorEmail } = req.body;
+//     const _id = new ObjectId(req.params.id);
+
+//     const request = await requestCollection.findOne({ _id });
+//     if (!request) return res.status(404).json({ message: "Request not found" });
+
+//     if (request.status !== "pending") {
+//       return res.status(400).json({ message: "Request is not pending" });
+//     }
+
+//     await requestCollection.updateOne(
+//       { _id },
+//       {
+//         $set: {
+//           status: "inprogress",
+//           donorName,
+//           donorEmail,
+//           updatedAt: new Date(),
+//         },
+//       }
+//     );
+
+//     res.json({ success: true });
+//   } catch (err) {
+//     console.error("Error confirming donation:", err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+
+
+
 app.patch("/api/requests/:id/confirm", async (req, res) => {
   try {
-    const { donorName, donorEmail } = req.body;
-    const _id = new ObjectId(req.params.id);
+    const { id } = req.params;
+    const {
+      donorName,
+      donorEmail,
+      donorBloodGroup,
+      lastDonationDate,
+    } = req.body;
 
-    const request = await requestCollection.findOne({ _id });
-    if (!request) return res.status(404).json({ message: "Request not found" });
+    const request = await requestsCollection.findOne({
+      _id: new ObjectId(id),
+    });
 
-    if (request.status !== "pending") {
-      return res.status(400).json({ message: "Request is not pending" });
+    if (!request) {
+      return res.status(404).json({ message: "Request not found" });
     }
 
-    await requestCollection.updateOne(
-      { _id },
+    // 🔐 blood group validation
+    if (donorBloodGroup !== request.bloodGroup) {
+      return res.status(400).json({
+        message: "Blood group does not match",
+      });
+    }
+
+    // 🔐 3 months rule
+    if (lastDonationDate) {
+      const lastDate = new Date(lastDonationDate);
+      const today = new Date();
+
+      const diffInDays =
+        (today.getTime() - lastDate.getTime()) /
+        (1000 * 60 * 60 * 24);
+
+      if (diffInDays < 90) {
+        return res.status(400).json({
+          message: "You must wait at least 3 months before donating again",
+        });
+      }
+    }
+
+    await requestsCollection.updateOne(
+      { _id: new ObjectId(id) },
       {
         $set: {
           status: "inprogress",
           donorName,
           donorEmail,
-          updatedAt: new Date(),
+          confirmedAt: new Date(),
         },
       }
     );
 
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Error confirming donation:", err);
+    res.json({ message: "Donation confirmed successfully" });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 // Issue JWT (example login/upsert endpoint)
 app.post("/api/auth/issue-token", async (req, res) => {
@@ -568,7 +632,7 @@ app.get("/api/blogs/:id", async (req, res) => {
 // Connect DB and start server
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     db = client.db("BloodDonation");
     userCollection = db.collection("user");
     requestCollection = db.collection("requests");
